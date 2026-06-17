@@ -36,7 +36,8 @@ const generateToken = async (req, res) => {
             room: roomName,
             canPublish: true,      // Can turn on camera/mic
             canSubscribe: true,    // Can see others
-            canPublishData: true   // Required for in-meeting chat
+            canPublishData: true,   // Required for in-meeting chat
+            canUpdateOwnMetadata: true
         });
 
         // 5. Sign the token and send it to the frontend
