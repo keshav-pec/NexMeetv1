@@ -5,6 +5,7 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const { errorHandler } = require('./middleware/errorMiddleware');
+const roomRoutes = require('./routes/roomRoutes');
 const app = express();
 app.set('trust proxy', 1);
 connectDB();
@@ -23,8 +24,10 @@ app.get('/api/health', (req, res) => {
     res.status(200).json({ message: 'NexMeet API is running smoothly.' });
 });
 
-// 2. Mount your auth routes under the /api/auth prefix
+// API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/rooms', roomRoutes);
+
 app.use(errorHandler);
 
 // Port configuration
