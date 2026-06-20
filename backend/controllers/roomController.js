@@ -1,59 +1,98 @@
-const { AccessToken } = require('livekit-server-sdk');
+const { AccessToken, RoomServiceClient } = require('livekit-server-sdk');
+const Meeting = require('../models/Meeting');
 
-// @desc    Generate a LiveKit access token for a specific room
-// @route   POST /api/rooms/token
-// @access  Private (Requires NexMeet JWT)
 const generateToken = async (req, res) => {
     try {
-        const { roomName } = req.body;
+        const { roomName, passcode } = req.body;
 
-        // 1. Validate Input
-        if (!roomName) {
-            return res.status(400).json({ message: 'Room name is required' });
+        if (!roomName) return res.status(400).json({ message: 'Room name is required' });
+
+        const meeting = await Meeting.findOne({ meetingId: roomName });
+        if (!meeting) return res.status(404).json({ message: 'Meeting room does not exist.' });
+
+        // Check if the requester is the host of this meeting
+        const isHost = meeting.hostId.toString() === req.user._id.toString();
+
+        // Passcode logic: If it has a passcode AND the user is NOT the host, verify it.
+        if (meeting.passcode && !isHost) {
+            if (!passcode) {
+                return res.status(401).json({ requirePasscode: true, message: 'Passcode required' });
+            }
+            if (meeting.passcode !== passcode) {
+                return res.status(401).json({ requirePasscode: true, message: 'Incorrect passcode' });
+            }
         }
 
-        // 2. Identify the User (req.user comes from our protect middleware)
         const participantName = req.user.name;
-        const participantIdentity = req.user._id.toString(); // Must be a unique string
+        const participantIdentity = req.user._id.toString();
 
-        // 3. Create the LiveKit Access Token
-        // We use the credentials stored in our .env file
         const at = new AccessToken(
             process.env.LIVEKIT_API_KEY,
             process.env.LIVEKIT_API_SECRET,
             {
                 identity: participantIdentity,
                 name: participantName,
-                // The token will expire in 2 hours (standard meeting limit)
+                // Inject the Host status into LiveKit metadata so the frontend UI can read it
+                metadata: JSON.stringify({ isHost }),
                 ttl: '2h',
             }
         );
 
-        // 4. Set Permissions (Grants)
-        // We grant this specific user permission to join ONLY the requested room
         at.addGrant({
             roomJoin: true,
             room: roomName,
-            canPublish: true,      // Can turn on camera/mic
-            canSubscribe: true,    // Can see others
-            canPublishData: true,   // Required for in-meeting chat
+            canPublish: true,
+            canSubscribe: true,
+            canPublishData: true,
             canUpdateOwnMetadata: true
         });
 
-        // 5. Sign the token and send it to the frontend
         const token = await at.toJwt();
 
         res.status(200).json({
             token,
-            livekitUrl: process.env.LIVEKIT_URL
+            livekitUrl: process.env.LIVEKIT_URL,
+            meetingName: meeting.name // Pass the real name to the UI
         });
 
     } catch (error) {
         console.error('LiveKit Token Error:', error);
-        res.status(500).json({ message: 'Failed to generate meeting token', error: error.message });
+        res.status(500).json({ message: 'Server error generating token' });
     }
 };
 
-module.exports = {
-    generateToken
-};
+// NEW: End the meeting for everyone
+const endMeetingForAll = async (req, res) => {
+    try {
+        const { roomName } = req.body;
+        const meeting = await Meeting.findOne({ meetingId: roomName });
+
+        if (!meeting) return res.status(404).json({ message: 'Meeting not found' });
+
+        // Security: Only the host can shut down the room
+        if (meeting.hostId.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Only the host can end the meeting for everyone.' });
+        }
+
+        // Connect to LiveKit Server API to destroy the room
+        const roomService = new RoomServiceClient(
+            process.env.LIVEKIT_URL,
+            process.env.LIVEKIT_API_KEY,
+            process.env.LIVEKIT_API_SECRET
+        );
+
+        await roomService.deleteRoom(roomName);
+
+        // Mark as inactive in DB
+        meeting.isActive = false;
+        await meeting.save();
+
+        res.status(200).json({ message: 'Meeting ended successfully.' });
+
+    } catch (error) {
+        console.error('End Meeting Error:', error);
+        res.status(500).json({ message: 'Failed to end meeting.' });
+    }
+}
+
+module.exports = { generateToken, endMeetingForAll };

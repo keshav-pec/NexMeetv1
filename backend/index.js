@@ -6,6 +6,7 @@ const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const { errorHandler } = require('./middleware/errorMiddleware');
 const roomRoutes = require('./routes/roomRoutes');
+const meetingRoutes = require('./routes/meetingRoutes');
 const app = express();
 app.set('trust proxy', 1);
 connectDB();
@@ -27,7 +28,7 @@ app.get('/api/health', (req, res) => {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
-
+app.use('/api/meetings', meetingRoutes);
 app.use(errorHandler);
 
 // Port configuration

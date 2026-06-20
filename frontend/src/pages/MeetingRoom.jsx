@@ -7,9 +7,9 @@ import {
 import { Track } from 'livekit-client';
 import {
     Mic, MicOff, Video, VideoOff, MonitorUp, Phone, Settings,
-    MessageSquare, Share2, User, X, Send, ChevronLeft, ChevronRight, Sun, Moon, Users
+    MessageSquare, Share2, User, X, Send, ChevronLeft, ChevronRight, Sun, Moon, Users, Lock
 } from 'lucide-react';
-import { fetchLiveKitToken } from '../api/roomService';
+import { fetchLiveKitToken, endMeetingOnServer } from '../api/roomService';
 import useThemeStore from '../store/useThemeStore';
 import toast from 'react-hot-toast';
 
@@ -19,30 +19,86 @@ export default function MeetingRoom() {
     const [connectionDetails, setConnectionDetails] = useState(null);
     const [error, setError] = useState(null);
 
-    useEffect(() => {
-        if (!roomName) return;
-        let mounted = true;
-        const getToken = async () => {
-            try {
-                const details = await fetchLiveKitToken(roomName);
-                if (mounted) setConnectionDetails(details);
-            } catch (err) {
-                if (mounted) {
-                    setError(err.message);
-                    toast.error(`Connection failed: ${err.message}`);
-                }
+    const [isLocked, setIsLocked] = useState(false);
+    const [passcode, setPasscode] = useState('');
+    const [isCheckingPasscode, setIsCheckingPasscode] = useState(false);
+
+    const attemptConnection = async (codeToTry = null) => {
+        try {
+            setIsCheckingPasscode(true);
+            setError(null);
+            const details = await fetchLiveKitToken(roomName, codeToTry);
+            setConnectionDetails(details);
+            setIsLocked(false);
+        } catch (err) {
+            if (err.isPasscodeRequired) {
+                setIsLocked(true);
+                if (codeToTry) toast.error(err.message);
+            } else {
+                setError(err.message);
+                toast.error(`Connection failed: ${err.message}`);
             }
-        };
-        getToken();
-        return () => { mounted = false; };
+        } finally {
+            setIsCheckingPasscode(false);
+        }
+    };
+
+    useEffect(() => {
+        if (roomName) attemptConnection();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [roomName]);
 
-    if (error) return <div className="h-screen w-screen flex items-center justify-center bg-gray-50 dark:bg-[#0a0a0a] text-red-500 transition-colors duration-300">Error: {error}</div>;
-    if (!connectionDetails) return <div className="h-screen w-screen flex items-center justify-center bg-gray-50 dark:bg-[#0a0a0a] text-gray-500 dark:text-gray-400 transition-colors duration-300">Establishing secure organizational RTC layer...</div>;
+    const handlePasscodeSubmit = (e) => {
+        e.preventDefault();
+        if (passcode.trim()) {
+            attemptConnection(passcode.trim());
+        }
+    };
+
+    if (error) return (
+        <div className="h-screen w-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-300 px-4 text-center">
+            <div className="p-4 bg-red-100 dark:bg-red-500/10 rounded-full mb-4 text-red-500"><X size={32} /></div>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Cannot Join Meeting</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">{error}</p>
+            <button onClick={() => navigate('/')} className="px-6 py-2 bg-gray-900 dark:bg-white text-white dark:text-black rounded-lg font-medium transition-colors">Return to Dashboard</button>
+        </div>
+    );
+
+    if (isLocked) return (
+        <div className="h-screen w-screen flex items-center justify-center bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-300 px-4">
+            <div className="w-full max-w-md bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl p-8 shadow-2xl text-center animate-in zoom-in-95">
+                <div className="w-16 h-16 bg-cyan-100 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Lock size={32} />
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Protected Meeting</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-8">This room requires a 6-digit passcode to enter.</p>
+
+                <form onSubmit={handlePasscodeSubmit} className="space-y-4">
+                    <input
+                        type="text"
+                        maxLength={6}
+                        value={passcode}
+                        onChange={(e) => setPasscode(e.target.value)}
+                        placeholder="Enter Passcode"
+                        className="w-full px-4 py-3 text-center tracking-widest text-lg bg-gray-50 dark:bg-white/5 border border-gray-300 dark:border-white/10 rounded-xl focus:outline-none focus:border-cyan-500 dark:focus:border-cyan-500 text-gray-900 dark:text-white transition-colors"
+                    />
+                    <button
+                        type="submit"
+                        disabled={!passcode.trim() || isCheckingPasscode}
+                        className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl transition-colors disabled:opacity-50"
+                    >
+                        {isCheckingPasscode ? 'Verifying...' : 'Unlock & Join'}
+                    </button>
+                </form>
+                <button onClick={() => navigate('/')} className="mt-6 text-sm text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+            </div>
+        </div>
+    );
+
+    if (!connectionDetails) return <div className="h-screen w-screen flex items-center justify-center bg-gray-50 dark:bg-[#0a0a0a] text-gray-500 dark:text-gray-400 transition-colors duration-300">Verifying secure connection...</div>;
 
     return (
         <div className="h-screen w-screen bg-gray-50 dark:bg-[#0a0a0a] text-gray-900 dark:text-gray-200 flex flex-col font-sans select-none overflow-hidden transition-colors duration-300">
-
             <style>
                 {`
           @keyframes speaker-vibrate {
@@ -72,23 +128,20 @@ export default function MeetingRoom() {
                 }}
                 className="flex-1 flex flex-col relative min-h-0 overflow-hidden"
             >
-                <ActiveRoomContent roomName={roomName} />
+                <ActiveRoomContent roomName={roomName} connectionDetails={connectionDetails} />
                 <RoomAudioRenderer />
             </LiveKitRoom>
         </div>
     );
 }
 
-function ActiveRoomContent({ roomName }) {
-    const room = useRoomContext();
+function ActiveRoomContent({ roomName, connectionDetails }) {
     const { localParticipant } = useLocalParticipant();
     const { theme, toggleTheme } = useThemeStore();
+    const participants = useParticipants();
 
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-
-    // Manage which sidebar is active: 'chat', 'participants', or null
     const [activeSidebar, setActiveSidebar] = useState(null);
-
     const [newName, setNewName] = useState('');
     const [speakerQueue, setSpeakerQueue] = useState([]);
     const [currentPage, setCurrentPage] = useState(0);
@@ -177,18 +230,16 @@ function ActiveRoomContent({ roomName }) {
     const toggleSidebar = (sidebarName) => {
         setActiveSidebar(prev => prev === sidebarName ? null : sidebarName);
     };
-    const participants = useParticipants();
+    
     return (
         <div className="flex-1 flex flex-col relative w-full p-2 md:p-3 pb-24 md:pb-26 overflow-hidden min-h-0">
 
-            {/* Top Header - Z-INDEX FIXED (Elevated to z-50 to overlap sidebars) */}
             <header className="w-full flex justify-between items-center mb-3 z-50 shrink-0 px-2">
                 <h1 className="text-base md:text-lg font-semibold tracking-tight text-gray-900 dark:text-white/90">
-                    {roomName}
+                    {connectionDetails?.meetingName || roomName}
                 </h1>
 
                 <div className="flex items-center gap-2 relative">
-
                     <button
                         onClick={() => toggleSidebar('participants')}
                         className={`p-2 rounded-xl transition-all cursor-pointer ${activeSidebar === 'participants' ? 'bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 ring-1 ring-cyan-500' : 'bg-gray-200 dark:bg-white/5 hover:bg-gray-300 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300'}`}
@@ -244,9 +295,7 @@ function ActiveRoomContent({ roomName }) {
                 </div>
             </header>
 
-            {/* Main Layout Engine */}
             <div className="flex-1 flex gap-2 md:gap-3 overflow-hidden relative min-h-0 h-full w-full">
-
                 {hasScreenShare ? (
                     <main className="flex-1 flex flex-col lg:flex-row gap-2 md:gap-3 overflow-hidden w-full h-full">
                         <div className="flex-1 lg:w-3/4 rounded-xl overflow-hidden bg-gray-200 dark:bg-[#111] border border-gray-300 dark:border-white/5 relative shadow-inner">
@@ -300,7 +349,6 @@ function ActiveRoomContent({ roomName }) {
                     </main>
                 )}
 
-                {/* Dynamic Sidebar Container */}
                 {activeSidebar && (
                     <aside className="absolute inset-0 z-40 sm:relative sm:inset-auto w-full sm:w-80 h-full min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 sm:rounded-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-right-4 duration-200 shadow-2xl sm:shadow-none">
                         <div className="p-3.5 border-b border-gray-200 dark:border-white/10 flex justify-between items-center bg-gray-50 dark:bg-[#1a1a1a] sm:rounded-t-2xl shrink-0">
@@ -326,13 +374,10 @@ function ActiveRoomContent({ roomName }) {
                     <ControlActionButton icon={isMicOn ? <Mic size={22} /> : <MicOff size={22} />} label={isMicOn ? "Mute" : "Unmute"} isActive={isMicOn} type="av" onClick={() => localParticipant?.setMicrophoneEnabled(!isMicOn)} />
                     <ControlActionButton icon={isCameraOn ? <Video size={22} /> : <VideoOff size={22} />} label={isCameraOn ? "Stop Cam" : "Start Cam"} isActive={isCameraOn} type="av" onClick={() => localParticipant?.setCameraEnabled(!isCameraOn)} />
                 </div>
-                <div className="px-1 sm:px-2">
-                    <button onClick={() => room.disconnect()} className="flex items-center justify-center p-2.5 sm:p-3 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all group cursor-pointer shadow-md shadow-red-500/20" title="End Call">
-                        <div className="transition-transform group-hover:scale-105">
-                            <Phone size={22} className="rotate-[135deg]" />
-                        </div>
-                    </button>
-                </div>
+                
+                {/* Replaced standard end button with the smart dropdown component */}
+                <EndCallButton roomName={roomName} />
+
                 <div className="flex items-center gap-1 sm:gap-1.5">
                     <ControlActionButton icon={<MonitorUp size={22} />} label="Share" isActive={isLocalScreenSharing} type="feature" onClick={() => localParticipant?.setScreenShareEnabled(!isLocalScreenSharing)} />
                     <ControlActionButton icon={<MessageSquare size={22} />} label="Chat" isActive={activeSidebar === 'chat'} type="feature" onClick={() => toggleSidebar('chat')} />
@@ -342,15 +387,75 @@ function ActiveRoomContent({ roomName }) {
     );
 }
 
-// Reusable Video Tile Component
-function VideoTile({ trackRef, className = "" }) {
+// Smart End Call Button (Checks if Host)
+function EndCallButton({ roomName }) {
+    const room = useRoomContext();
+    const { localParticipant } = useLocalParticipant();
+    const [showOptions, setShowOptions] = useState(false);
+
+    let isHost = false;
+    try {
+        const meta = JSON.parse(localParticipant?.metadata || '{}');
+        isHost = meta.isHost;
+    } catch (e) { }
+
+    const handleLeave = () => room.disconnect();
+
+    const handleEndForAll = async () => {
+        try {
+            await endMeetingOnServer(roomName);
+            room.disconnect(); 
+            toast.success('Meeting ended for everyone.');
+        } catch (error) {
+            toast.error(error.message);
+        }
+    };
+
+    if (!isHost) {
+        return (
+            <div className="px-1 sm:px-2">
+                <button onClick={handleLeave} className="flex items-center justify-center p-2.5 sm:p-3 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all group cursor-pointer shadow-md shadow-red-500/20" title="Leave Meeting">
+                    <div className="transition-transform group-hover:scale-105"><Phone size={22} className="rotate-[135deg]" /></div>
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <div className="px-1 sm:px-2 relative">
+            {showOptions && (
+                <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl p-1.5 z-50 animate-in slide-in-from-bottom-2">
+                    <button onClick={handleEndForAll} className="w-full text-left px-3 py-2 text-sm text-red-600 dark:text-red-400 font-semibold hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors">
+                        End meeting for all
+                    </button>
+                    <button onClick={handleLeave} className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors mt-1">
+                        Leave meeting
+                    </button>
+                </div>
+            )}
+            <button onClick={() => setShowOptions(!showOptions)} className="flex items-center justify-center p-2.5 sm:p-3 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all group cursor-pointer shadow-md shadow-red-500/20" title="Meeting Options">
+                <div className="transition-transform group-hover:scale-105"><Phone size={22} className="rotate-[135deg]" /></div>
+            </button>
+        </div>
+    );
+}
+
+// Updated Video Tile (Shows Host / You Badges)
+function VideoTile({ trackRef, className = "", queuePosition }) {
     const { participant } = trackRef;
     const isSpeaking = participant.isSpeaking;
     const hasActiveVideo = participant.isCameraEnabled;
 
+    let isHost = false;
+    try {
+        const meta = JSON.parse(participant.metadata || '{}');
+        isHost = meta.isHost;
+    } catch (e) { }
+
     return (
         <div className={`relative w-full h-full rounded-xl overflow-hidden bg-gray-200 dark:bg-[#111] transition-all duration-300 group flex items-center justify-center border ${isSpeaking ? 'border-transparent' : 'border-gray-300 dark:border-white/5'} ${className}`}>
             {isSpeaking && <div className="absolute inset-0 rounded-xl pointer-events-none speaker-ring"></div>}
+            
             {hasActiveVideo ? (
                 <VideoTrack trackRef={trackRef} className="w-full h-full object-cover" />
             ) : (
@@ -360,11 +465,17 @@ function VideoTile({ trackRef, className = "" }) {
                     </div>
                 </div>
             )}
+            
             <div className="absolute bottom-2.5 left-2.5 bg-white/80 dark:bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg border border-gray-200 dark:border-white/5 flex items-center gap-2 max-w-[85%] shadow-sm z-10">
-                <span className="text-[11px] font-medium text-gray-900 dark:text-white/90 truncate">
-                    {participant.name || participant.identity} {participant.isLocal && " (You)"}
+                <span className="text-[11px] font-medium text-gray-900 dark:text-white/90 truncate flex items-center gap-1.5">
+                    {participant.name || participant.identity}
+                    <div className="flex gap-1">
+                        {isHost && <span className="bg-cyan-100 dark:bg-cyan-500/20 text-cyan-700 dark:text-cyan-400 px-1 rounded text-[9px] font-bold tracking-wider uppercase">Host</span>}
+                        {participant.isLocal && <span className="bg-gray-200 dark:bg-white/20 text-gray-700 dark:text-gray-300 px-1 rounded text-[9px] font-bold tracking-wider uppercase">You</span>}
+                    </div>
                 </span>
             </div>
+            
             <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
                 {!participant.isMicrophoneEnabled && (
                     <div className="bg-red-50 dark:bg-red-500/20 border border-red-200 dark:border-red-500/30 backdrop-blur-md p-1.5 rounded-lg text-red-500 dark:text-red-400 shadow-sm">
@@ -376,41 +487,67 @@ function VideoTile({ trackRef, className = "" }) {
     );
 }
 
-// New Participants Sidebar Component
+// Updated Participants Sidebar (Hierarchy Split)
 function ParticipantsList() {
-    const participants = useParticipants(); // Fetches all active participants
+    const participants = useParticipants(); 
+
+    const hosts = [];
+    const regularParticipants = [];
+
+    participants.forEach(p => {
+        let isHost = false;
+        try {
+            const meta = JSON.parse(p.metadata || '{}');
+            isHost = meta.isHost;
+        } catch(e) {}
+        
+        if (isHost) hosts.push(p);
+        else regularParticipants.push(p);
+    });
+
+    const ParticipantRow = ({ p, isHost }) => (
+        <div className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors">
+            <div className="flex items-center gap-3 truncate">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border ${isHost ? 'bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-500/30' : 'bg-gray-200 dark:bg-white/10 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-white/20'}`}>
+                    <span className="text-xs font-bold uppercase">
+                        {(p.name || p.identity).charAt(0)}
+                    </span>
+                </div>
+                <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate flex items-center gap-1.5">
+                        {p.name || p.identity}
+                        {p.isLocal && <span className="text-[9px] text-cyan-600 dark:text-cyan-400 font-bold bg-cyan-50 dark:bg-cyan-500/10 px-1 rounded uppercase tracking-wider">You</span>}
+                    </span>
+                    {isHost && <span className="text-[10px] text-gray-500 dark:text-gray-400">Meeting Host</span>}
+                </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+                {p.isMicrophoneEnabled ? <Mic size={14} className="text-gray-400 dark:text-gray-500" /> : <MicOff size={14} className="text-red-500 dark:text-red-400" />}
+                {p.isCameraEnabled ? <Video size={14} className="text-gray-400 dark:text-gray-500" /> : <VideoOff size={14} className="text-red-500 dark:text-red-400" />}
+            </div>
+        </div>
+    );
 
     return (
         <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
-            <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-1">
-                {participants.map((p) => (
-                    <div key={p.identity} className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors">
-                        <div className="flex items-center gap-3 truncate">
-                            <div className="w-8 h-8 rounded-full bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center shrink-0 border border-cyan-200 dark:border-cyan-500/30">
-                                <span className="text-xs font-bold uppercase">
-                                    {(p.name || p.identity).charAt(0)}
-                                </span>
-                            </div>
-                            <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
-                                {p.name || p.identity}
-                                {p.isLocal && <span className="ml-2 text-[10px] text-cyan-600 dark:text-cyan-400 font-semibold bg-cyan-50 dark:bg-cyan-500/10 px-1.5 py-0.5 rounded-md">You</span>}
-                            </span>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                            {p.isMicrophoneEnabled ? (
-                                <Mic size={14} className="text-gray-400 dark:text-gray-500" />
-                            ) : (
-                                <MicOff size={14} className="text-red-500 dark:text-red-400" />
-                            )}
-                            {p.isCameraEnabled ? (
-                                <Video size={14} className="text-gray-400 dark:text-gray-500" />
-                            ) : (
-                                <VideoOff size={14} className="text-red-500 dark:text-red-400" />
-                            )}
+            <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-4">
+                {hosts.length > 0 && (
+                    <div>
+                        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-1">Host</h3>
+                        <div className="space-y-1">
+                            {hosts.map(p => <ParticipantRow key={p.identity} p={p} isHost={true} />)}
                         </div>
                     </div>
-                ))}
+                )}
+                {regularParticipants.length > 0 && (
+                    <div>
+                        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-1 pt-2 border-t border-gray-200 dark:border-white/5">Participants</h3>
+                        <div className="space-y-1">
+                            {regularParticipants.map(p => <ParticipantRow key={p.identity} p={p} isHost={false} />)}
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
