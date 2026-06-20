@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     LiveKitRoom, RoomAudioRenderer, useTracks,
-    useLocalParticipant, useChat, useRoomContext, VideoTrack
+    useLocalParticipant, useChat, useRoomContext, VideoTrack, useParticipants
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import {
@@ -43,7 +43,6 @@ export default function MeetingRoom() {
     return (
         <div className="h-screen w-screen bg-gray-50 dark:bg-[#0a0a0a] text-gray-900 dark:text-gray-200 flex flex-col font-sans select-none overflow-hidden transition-colors duration-300">
 
-            {/* Dynamic CSS for the vibrating speaker effect */}
             <style>
                 {`
           @keyframes speaker-vibrate {
@@ -86,12 +85,12 @@ function ActiveRoomContent({ roomName }) {
     const { theme, toggleTheme } = useThemeStore();
 
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-    const [isChatOpen, setIsChatOpen] = useState(false);
+
+    // Manage which sidebar is active: 'chat', 'participants', or null
+    const [activeSidebar, setActiveSidebar] = useState(null);
+
     const [newName, setNewName] = useState('');
-
-    // Persistent Speaker Queue (LRU Cache style)
     const [speakerQueue, setSpeakerQueue] = useState([]);
-
     const [currentPage, setCurrentPage] = useState(0);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
 
@@ -109,12 +108,9 @@ function ActiveRoomContent({ roomName }) {
         { onlySubscribed: false }
     );
 
-    // 1. SPLIT TRACKS
     const screenShares = trackReferences.filter(t => t.source === Track.Source.ScreenShare);
     const cameras = trackReferences.filter(t => t.source === Track.Source.Camera);
 
-    // 2. LRU SPEAKER QUEUE LOGIC
-    // Extract whoever is currently talking right now
     const currentlySpeakingIds = cameras
         .filter(t => t.participant.isSpeaking)
         .map(t => t.participant.identity);
@@ -124,29 +120,23 @@ function ActiveRoomContent({ roomName }) {
             setSpeakerQueue(prevQueue => {
                 let newQueue = [...prevQueue];
                 currentlySpeakingIds.forEach(id => {
-                    // Remove them from their old position if they exist
                     newQueue = newQueue.filter(existingId => existingId !== id);
-                    // Push them to the absolute front of the line
                     newQueue.unshift(id);
                 });
                 return newQueue;
             });
         }
-        // We use JSON.stringify so this effect only runs when the array contents actually change
     }, [JSON.stringify(currentlySpeakingIds)]);
 
-    // 3. SORT CAMERAS BASED ON THE PERSISTENT QUEUE
     const orderedCameras = [...cameras].sort((a, b) => {
         const indexA = speakerQueue.indexOf(a.participant.identity);
         const indexB = speakerQueue.indexOf(b.participant.identity);
-
-        if (indexA !== -1 && indexB !== -1) return indexA - indexB; // Both spoke before, order by recency
-        if (indexA !== -1) return -1; // Only A spoke before, A comes first
-        if (indexB !== -1) return 1;  // Only B spoke before, B comes first
-        return 0; // Neither spoke yet, keep default order
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        return 0;
     });
 
-    // 4. PAGINATION CALCULATIONS (Using our new ordered array)
     const itemsPerPage = isMobile ? 3 : 6;
     const totalPages = Math.ceil(orderedCameras.length / itemsPerPage) || 1;
 
@@ -157,7 +147,6 @@ function ActiveRoomContent({ roomName }) {
     const currentCameras = orderedCameras.slice(currentPage * itemsPerPage, (currentPage + 1) * itemsPerPage);
     const hasScreenShare = screenShares.length > 0;
 
-    // 5. DYNAMIC GRID CLASSES
     const getGridClasses = (count) => {
         if (isMobile) {
             if (count === 1) return 'grid-cols-1 grid-rows-1';
@@ -185,21 +174,24 @@ function ActiveRoomContent({ roomName }) {
         });
     };
 
+    const toggleSidebar = (sidebarName) => {
+        setActiveSidebar(prev => prev === sidebarName ? null : sidebarName);
+    };
+    const participants = useParticipants();
     return (
         <div className="flex-1 flex flex-col relative w-full p-2 md:p-3 pb-24 md:pb-26 overflow-hidden min-h-0">
 
-            {/* Top Header */}
-            <header className="w-full flex justify-between items-center mb-3 z-10 shrink-0 px-2">
+            {/* Top Header - Z-INDEX FIXED (Elevated to z-50 to overlap sidebars) */}
+            <header className="w-full flex justify-between items-center mb-3 z-50 shrink-0 px-2">
                 <h1 className="text-base md:text-lg font-semibold tracking-tight text-gray-900 dark:text-white/90">
                     {roomName}
                 </h1>
 
                 <div className="flex items-center gap-2 relative">
 
-                    {/* New Participants Button */}
                     <button
-                        onClick={() => toast('Participants panel coming soon!')}
-                        className="p-2 bg-gray-200 dark:bg-white/5 hover:bg-gray-300 dark:hover:bg-white/10 rounded-xl text-gray-600 dark:text-gray-300 transition-all cursor-pointer"
+                        onClick={() => toggleSidebar('participants')}
+                        className={`p-2 rounded-xl transition-all cursor-pointer ${activeSidebar === 'participants' ? 'bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 ring-1 ring-cyan-500' : 'bg-gray-200 dark:bg-white/5 hover:bg-gray-300 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300'}`}
                         title="Participants"
                     >
                         <Users size={16} />
@@ -224,7 +216,6 @@ function ActiveRoomContent({ roomName }) {
                         <Settings size={16} />
                     </button>
 
-                    {/* Settings Dropdown with Theme Toggle */}
                     {isSettingsOpen && (
                         <div className="absolute right-0 top-11 w-64 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-xl p-4 shadow-xl dark:shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                             <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Room Settings</h3>
@@ -256,7 +247,6 @@ function ActiveRoomContent({ roomName }) {
             {/* Main Layout Engine */}
             <div className="flex-1 flex gap-2 md:gap-3 overflow-hidden relative min-h-0 h-full w-full">
 
-                {/* Screen Share Focus Layout */}
                 {hasScreenShare ? (
                     <main className="flex-1 flex flex-col lg:flex-row gap-2 md:gap-3 overflow-hidden w-full h-full">
                         <div className="flex-1 lg:w-3/4 rounded-xl overflow-hidden bg-gray-200 dark:bg-[#111] border border-gray-300 dark:border-white/5 relative shadow-inner">
@@ -273,9 +263,7 @@ function ActiveRoomContent({ roomName }) {
                         </div>
                     </main>
                 ) : (
-                    /* Normal Paginated Grid Layout */
                     <main className="flex-1 flex items-center justify-center w-full h-full overflow-hidden min-h-0 relative">
-
                         {totalPages > 1 && (
                             <button
                                 onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
@@ -288,7 +276,6 @@ function ActiveRoomContent({ roomName }) {
 
                         <div className={`w-full max-w-7xl h-full grid gap-2 md:gap-3 ${getGridClasses(currentCameras.length)} items-center justify-center p-1 sm:p-4`}>
                             {currentCameras.map((trackRef, index) => (
-                                // Passing the queue index allows us to optionally add visual indicators of "queue position" later
                                 <VideoTile key={trackRef.participant.identity} trackRef={trackRef} queuePosition={currentPage * itemsPerPage + index} />
                             ))}
                         </div>
@@ -313,23 +300,27 @@ function ActiveRoomContent({ roomName }) {
                     </main>
                 )}
 
-                {/* Chat Drawer */}
-                {isChatOpen && (
+                {/* Dynamic Sidebar Container */}
+                {activeSidebar && (
                     <aside className="absolute inset-0 z-40 sm:relative sm:inset-auto w-full sm:w-80 h-full min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 sm:rounded-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-right-4 duration-200 shadow-2xl sm:shadow-none">
                         <div className="p-3.5 border-b border-gray-200 dark:border-white/10 flex justify-between items-center bg-gray-50 dark:bg-[#1a1a1a] sm:rounded-t-2xl shrink-0">
                             <h2 className="text-xs font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                                <MessageSquare size={14} className="text-cyan-500 dark:text-cyan-400" /> Meeting Chat
+                                {activeSidebar === 'chat' ? (
+                                    <><MessageSquare size={14} className="text-cyan-500 dark:text-cyan-400" /> Meeting Chat</>
+                                ) : (
+                                    <><Users size={14} className="text-cyan-500 dark:text-cyan-400" /> Participants ({participants.length})</>
+                                )}
                             </h2>
-                            <button onClick={() => setIsChatOpen(false)} className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"><X size={16} /></button>
+                            <button onClick={() => setActiveSidebar(null)} className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"><X size={16} /></button>
                         </div>
+
                         <div className="flex-1 min-h-0 h-full overflow-hidden">
-                            <ChatMessages />
+                            {activeSidebar === 'chat' ? <ChatMessages /> : <ParticipantsList />}
                         </div>
                     </aside>
                 )}
             </div>
 
-            {/* Control Bar */}
             <footer className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 dark:bg-[#121212]/90 backdrop-blur-xl border border-gray-200 dark:border-white/10 px-4 sm:px-5 py-2 rounded-2xl shadow-[0_15px_40px_rgba(0,0,0,0.08)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex items-center justify-between gap-4 sm:gap-6 z-50 w-[92vw] sm:w-fit max-w-sm sm:max-w-none transition-colors duration-300">
                 <div className="flex items-center gap-1 sm:gap-1.5">
                     <ControlActionButton icon={isMicOn ? <Mic size={22} /> : <MicOff size={22} />} label={isMicOn ? "Mute" : "Unmute"} isActive={isMicOn} type="av" onClick={() => localParticipant?.setMicrophoneEnabled(!isMicOn)} />
@@ -344,7 +335,7 @@ function ActiveRoomContent({ roomName }) {
                 </div>
                 <div className="flex items-center gap-1 sm:gap-1.5">
                     <ControlActionButton icon={<MonitorUp size={22} />} label="Share" isActive={isLocalScreenSharing} type="feature" onClick={() => localParticipant?.setScreenShareEnabled(!isLocalScreenSharing)} />
-                    <ControlActionButton icon={<MessageSquare size={22} />} label="Chat" isActive={isChatOpen} type="feature" onClick={() => setIsChatOpen(!isChatOpen)} />
+                    <ControlActionButton icon={<MessageSquare size={22} />} label="Chat" isActive={activeSidebar === 'chat'} type="feature" onClick={() => toggleSidebar('chat')} />
                 </div>
             </footer>
         </div>
@@ -359,10 +350,7 @@ function VideoTile({ trackRef, className = "" }) {
 
     return (
         <div className={`relative w-full h-full rounded-xl overflow-hidden bg-gray-200 dark:bg-[#111] transition-all duration-300 group flex items-center justify-center border ${isSpeaking ? 'border-transparent' : 'border-gray-300 dark:border-white/5'} ${className}`}>
-
-            {/* VIBRATING BORDER ANIMATION */}
             {isSpeaking && <div className="absolute inset-0 rounded-xl pointer-events-none speaker-ring"></div>}
-
             {hasActiveVideo ? (
                 <VideoTrack trackRef={trackRef} className="w-full h-full object-cover" />
             ) : (
@@ -372,19 +360,57 @@ function VideoTile({ trackRef, className = "" }) {
                     </div>
                 </div>
             )}
-
             <div className="absolute bottom-2.5 left-2.5 bg-white/80 dark:bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg border border-gray-200 dark:border-white/5 flex items-center gap-2 max-w-[85%] shadow-sm z-10">
                 <span className="text-[11px] font-medium text-gray-900 dark:text-white/90 truncate">
                     {participant.name || participant.identity} {participant.isLocal && " (You)"}
                 </span>
             </div>
-
             <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
                 {!participant.isMicrophoneEnabled && (
                     <div className="bg-red-50 dark:bg-red-500/20 border border-red-200 dark:border-red-500/30 backdrop-blur-md p-1.5 rounded-lg text-red-500 dark:text-red-400 shadow-sm">
                         <MicOff size={12} />
                     </div>
                 )}
+            </div>
+        </div>
+    );
+}
+
+// New Participants Sidebar Component
+function ParticipantsList() {
+    const participants = useParticipants(); // Fetches all active participants
+
+    return (
+        <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-1">
+                {participants.map((p) => (
+                    <div key={p.identity} className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors">
+                        <div className="flex items-center gap-3 truncate">
+                            <div className="w-8 h-8 rounded-full bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center shrink-0 border border-cyan-200 dark:border-cyan-500/30">
+                                <span className="text-xs font-bold uppercase">
+                                    {(p.name || p.identity).charAt(0)}
+                                </span>
+                            </div>
+                            <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                                {p.name || p.identity}
+                                {p.isLocal && <span className="ml-2 text-[10px] text-cyan-600 dark:text-cyan-400 font-semibold bg-cyan-50 dark:bg-cyan-500/10 px-1.5 py-0.5 rounded-md">You</span>}
+                            </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                            {p.isMicrophoneEnabled ? (
+                                <Mic size={14} className="text-gray-400 dark:text-gray-500" />
+                            ) : (
+                                <MicOff size={14} className="text-red-500 dark:text-red-400" />
+                            )}
+                            {p.isCameraEnabled ? (
+                                <Video size={14} className="text-gray-400 dark:text-gray-500" />
+                            ) : (
+                                <VideoOff size={14} className="text-red-500 dark:text-red-400" />
+                            )}
+                        </div>
+                    </div>
+                ))}
             </div>
         </div>
     );

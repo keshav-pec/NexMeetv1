@@ -4,10 +4,10 @@ export default function Dashboard() {
         <div className="min-h-screen pt-24 px-6 flex flex-col items-center selection:bg-black/10 dark:selection:bg-white/20 transition-colors duration-300">
             <div className="w-full max-w-4xl mt-20 text-center">
                 <h1 className="text-4xl md:text-6xl font-bold text-gray-900 dark:text-white mb-6 tracking-tight transition-colors duration-300">
-                    Connect Seamlessly
+                    NexMeet
                 </h1>
                 <p className="text-lg text-gray-600 dark:text-gray-400 mb-12 max-w-2xl mx-auto font-light transition-colors duration-300">
-                    Start or join a secure video meeting with real-time transcriptions and intelligent summaries.
+                    Start or join a reliable & secure video meeting instantly.
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
